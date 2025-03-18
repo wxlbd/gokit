@@ -1,4 +1,4 @@
-package generic
+package genericx
 
 import (
 	"reflect"
@@ -7,7 +7,7 @@ import (
 	"unsafe"
 )
 
-// SyncMap is a thread-safe map[K]V.
+// SyncMap 是一个线程安全的 map[K]V
 type SyncMap[K comparable, V any] struct {
 	mu     sync.Mutex
 	read   atomic.Pointer[readOnly[K, V]]
@@ -19,17 +19,16 @@ func NewSyncMap[K comparable, V any]() *SyncMap[K, V] {
 	return &SyncMap[K, V]{}
 }
 
-// readOnly is an immutable struct stored atomically in the SyncMap.read field.
+// readOnly 是一个存储在 SyncMap.read 字段中的不可变结构体
 type readOnly[K comparable, V any] struct {
 	m       map[K]*entry[V]
-	amended bool // true if the dirty map contains some key not in m.
+	amended bool // 如果 dirty map 包含一些不在 m 中的键，则为 true
 }
 
-// expunged is an arbitrary pointer that marks entries which have been deleted
-// from the dirty map.
+// expunged 是一个任意指针，用于标记已从 dirty map 中删除的条目
 var expunged = unsafe.Pointer(new(any))
 
-// An entry is a slot in the map corresponding to a particular key.
+// entry 是映射中对应特定键的槽位
 type entry[V any] struct {
 	p atomic.Pointer[V]
 }
@@ -47,9 +46,8 @@ func (m *SyncMap[K, V]) loadReadOnly() readOnly[K, V] {
 	return readOnly[K, V]{}
 }
 
-// Load returns the value stored in the map for a key, or nil if no
-// value is present.
-// The ok result indicates whether value was found in the map.
+// Load 返回存储在映射中的键对应的值，如果没有值则返回 nil
+// ok 结果表示是否在映射中找到了值
 func (m *SyncMap[K, V]) Load(key K) (value V, ok bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
@@ -79,46 +77,39 @@ func (e *entry[V]) load() (value V, ok bool) {
 	return *p, true
 }
 
-// Store sets the value for a key.
+// Store 设置键对应的值
 func (m *SyncMap[K, V]) Store(key K, value V) {
 	_, _ = m.Swap(key, value)
 }
 
-// tryCompareAndSwap compare the entry with the given old value and swaps
-// it with a new value if the entry is equal to the old value, and the entry
-// has not been expunged.
+// tryCompareAndSwap 比较条目与给定的旧值，如果相等且条目未被删除，则与新值进行交换
 func (e *entry[V]) tryCompareAndSwap(old, new V) bool {
 	p := e.p.Load()
-	if p == nil || unsafe.Pointer(p) == expunged || reflect.DeepEqual(*p, old) {
+	if p == nil || unsafe.Pointer(p) == expunged {
+		return false
+	}
+	if !reflect.DeepEqual(*p, old) {
 		return false
 	}
 	nc := new
-	for {
-		if e.p.CompareAndSwap(p, &nc) {
-			return true
-		}
-		p = e.p.Load()
-		if p == nil || unsafe.Pointer(p) == expunged || reflect.DeepEqual(*p, old) {
-			return false
-		}
-	}
+	return e.p.CompareAndSwap(p, &nc)
 }
 
-// unexpungeLocked ensures that the entry is not marked as expunged.
+// unexpungeLocked 确保条目未被标记为已删除
 func (e *entry[V]) unexpungeLocked() (wasExpunged bool) {
 	return e.p.CompareAndSwap((*V)(expunged), nil)
 }
 
-// swapLocked unconditionally swaps a value into the entry.
+// swapLocked 无条件地将值交换到条目中
 func (e *entry[V]) swapLocked(i *V) *V {
 	return e.p.Swap(i)
 }
 
-// LoadOrStore returns the existing value for the key if present.
-// Otherwise, it stores and returns the given value.
-// The loaded result is true if the value was loaded, false if stored.
+// LoadOrStore 如果键存在则返回现有值
+// 否则，存储并返回给定值
+// loaded 结果表示值是加载的还是存储的
 func (m *SyncMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
-	// Avoid locking if it's a clean hit.
+	// 如果是干净命中，避免加锁
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		actual, loaded, ok := e.tryLoadOrStore(value)
@@ -150,8 +141,7 @@ func (m *SyncMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 	return actual, loaded
 }
 
-// tryLoadOrStore atomically loads or stores a value if the entry is not
-// expunged.
+// tryLoadOrStore 如果条目未被删除，则原子地加载或存储值
 func (e *entry[V]) tryLoadOrStore(i V) (actual V, loaded, ok bool) {
 	p := e.p.Load()
 	if unsafe.Pointer(p) == expunged {
@@ -177,8 +167,8 @@ func (e *entry[V]) tryLoadOrStore(i V) (actual V, loaded, ok bool) {
 	}
 }
 
-// LoadAndDelete deletes the value for a key, returning the previous value if any.
-// The loaded result reports whether the key was present.
+// LoadAndDelete 删除键对应的值，如果有则返回之前的值
+// loaded 结果报告键是否存在
 func (m *SyncMap[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
@@ -200,7 +190,7 @@ func (m *SyncMap[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
 	return zero, false
 }
 
-// Delete deletes the value for a key.
+// Delete 删除键对应的值
 func (m *SyncMap[K, V]) Delete(key K) {
 	m.LoadAndDelete(key)
 }
@@ -218,7 +208,7 @@ func (e *entry[V]) delete() (value V, ok bool) {
 	}
 }
 
-// trySwap swaps a value if the entry has not been expunged.
+// trySwap 如果条目未被删除，则交换值
 func (e *entry[V]) trySwap(i *V) (*V, bool) {
 	for {
 		p := e.p.Load()
@@ -231,8 +221,8 @@ func (e *entry[V]) trySwap(i *V) (*V, bool) {
 	}
 }
 
-// Swap swaps the value for a key and returns the previous value if any.
-// The loaded result reports whether the key was present.
+// Swap 交换键对应的值并返回之前的值（如果有）
+// loaded 结果报告键是否存在
 func (m *SyncMap[K, V]) Swap(key K, value V) (previous any, loaded bool) {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
@@ -270,15 +260,14 @@ func (m *SyncMap[K, V]) Swap(key K, value V) (previous any, loaded bool) {
 	return previous, loaded
 }
 
-// CompareAndSwap swaps the old and new values for key
-// if the value stored in the map is equal to old.
-// The old value must be of a comparable type.
+// CompareAndSwap 如果映射中存储的值等于旧值，则交换键的旧值和新值
+// 旧值必须是可比较类型
 func (m *SyncMap[K, V]) CompareAndSwap(key K, old, new V) bool {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		return e.tryCompareAndSwap(old, new)
 	} else if !read.amended {
-		return false // No existing value for key.
+		return false // 键没有现有值
 	}
 
 	m.mu.Lock()
@@ -289,22 +278,20 @@ func (m *SyncMap[K, V]) CompareAndSwap(key K, old, new V) bool {
 		swapped = e.tryCompareAndSwap(old, new)
 	} else if e, ok := m.dirty[key]; ok {
 		swapped = e.tryCompareAndSwap(old, new)
-		// We needed to lock mu in order to load the entry for key,
-		// and the operation didn't change the set of keys in the map
-		// (so it would be made more efficient by promoting the dirty
-		// map to read-only).
-		// Count it as a miss so that we will eventually switch to the
-		// more efficient steady state.
+		// 我们需要锁定 mu 来加载键的条目，
+		// 并且操作没有改变映射中的键集
+		// （所以通过将 dirty map 提升为只读可以提高效率）。
+		// 将其计为未命中，以便最终切换到更高效的稳定状态。
 		m.missLocked()
 	}
 	return swapped
 }
 
-// CompareAndDelete deletes the entry for key if its value is equal to old.
-// The old value must be of a comparable type.
+// CompareAndDelete 如果键的值等于旧值，则删除该条目
+// 旧值必须是可比较类型
 //
-// If there is no current value for key in the map, CompareAndDelete
-// returns false (even if the old value is the nil interface value).
+// 如果映射中没有键的当前值，CompareAndDelete 返回 false
+// （即使旧值是 nil 接口值）
 func (m *SyncMap[K, V]) CompareAndDelete(key K, old V) (deleted bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
@@ -314,31 +301,29 @@ func (m *SyncMap[K, V]) CompareAndDelete(key K, old V) (deleted bool) {
 		e, ok = read.m[key]
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
-			// Don't delete key from m.dirty: we still need to do the “compare” part
-			// of the operation. The entry will eventually be expunged when the
-			// dirty map is promoted to the read map.
-			//
-			// Regardless of whether the entry was present, record a miss: this key
-			// will take the slow path until the dirty map is promoted to the read
-			// map.
 			m.missLocked()
 		}
 		m.mu.Unlock()
 	}
-	for ok {
+	if !ok {
+		return false
+	}
+	for {
 		p := e.p.Load()
-		if p == nil || unsafe.Pointer(p) == expunged || reflect.DeepEqual(*p, old) {
+		if p == nil || unsafe.Pointer(p) == expunged {
+			return false
+		}
+		if !reflect.DeepEqual(*p, old) {
 			return false
 		}
 		if e.p.CompareAndSwap(p, nil) {
 			return true
 		}
 	}
-	return false
 }
 
-// Range calls f sequentially for each key and value present in the map.
-// If f returns false, range stops the iteration.
+// Range 按顺序为映射中的每个键和值调用 f
+// 如果 f 返回 false，range 停止迭代
 func (m *SyncMap[K, V]) Range(f func(key K, value V) bool) {
 	read := m.loadReadOnly()
 	if read.amended {
