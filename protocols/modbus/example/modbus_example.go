@@ -9,7 +9,7 @@ import (
 	"time"
 
 	// 用于串口通信
-	"github.com/wxlbd/gokit/protocols/modbus"
+	"github.com/wxlbd/gokit/v2/protocols/modbus"
 )
 
 // MockTransport 实现了一个模拟的传输接口，用于演示
